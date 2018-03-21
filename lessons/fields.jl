@@ -1,85 +1,99 @@
+import Base.-, Base.+, Base.*, Base./
+
 type Field{T}
+    values :: Array{T,1}
     mesh
-    value :: Array{T,1}
-    boundaryfield :: Dict{String, Array{T,1}}
-    boundarycondition
+    boundaries
 end
 
-function Field(T::Type, m::CartesianMesh, bc)
-    internalfield = zeros(T, m.nx*m.ny)
-    boundaryfield = Dict(
-                         "top" => zeros(T, m.nx),
-                         "bottom" => zeros(T, m.nx),
-                         "left" => zeros(T, m.ny),
-                         "right" => zeros(T, m.ny)
-    )
-    Field{T}(m, internalfield, boundaryfield, bc)
-end
-    
-typealias ScalarField Field{Float64};
-typealias VectorField Field{Vec2d};
 
-ScalarField(m :: CartesianMesh, bc) = Field(Float64, m, bc);
-VectorField(m :: CartesianMesh, bc) = Field(Vec2d, m, bc);
+const ScalarField = Field{Float64}
+ScalarField(m::Mesh) = ScalarField( zeros(Float64,length(m.cells)), m, Dict{String,Any}());
 
-asmatrix(f::ScalarField) = reshape(f.value, (f.mesh.nx,f.mesh.ny) );
 
-function asmatrix(f::VectorField)
-    m = zeros(f.mesh.nx, f.mesh.ny, 2)
-    for j=1:f.mesh.ny, i=1:f.mesh.nx
-        m[i,j,:] = f.value[i+(j-1)*f.mesh.nx]
+const VectorField = Field{Vec2d}
+VectorField(m::Mesh) = VectorField( zeros(Vec2d,length(m.cells)), m, Dict{String,Any}());
+
+
+for op ∈ [:+, :-, :*, :/]
+    @eval begin
+        function ($op){T}(a::Field{T}, b::Field{T})
+            assert(a.mesh == b.mesh)
+            Field{T}(broadcast($op,a.values,b.values), a.mesh, Dict{String,Any}());
+        end
     end
-    return m
+end
+
+
+for op ∈ [:+, :-, :*, :/]
+    @eval begin
+        function ($op){T}(a::Field{T}, b::T)
+            Field{T}(broadcast($op,a.values,b), a.mesh, Dict{String,Any}());
+        end
+    end
+end      
+
+
+for op ∈ [:+, :-, :*, :/]
+    @eval begin
+        function ($op){T}(a::Field{T}, b::Array{T,1})
+            assert( size(a.values) == size(b) )
+            Field(broadcast($op,a.values,b), a.mesh, Dict{String,Any}());
+        end
+    end
+end      
+
+*{T}(a::Number, f::Field{T}) = Field(a*f.values, f.mesh, Dict{String,Any}());
+-{T}(a::Field{T}) = Field{T}(-a.values, a.mesh);
+
+
+function ←{T}(a::Field{T}, b::Field{T})
+    assert(a.mesh == b.mesh)
+    a.values = copy(b.values)
+end
+
+
+function boundary_value(patch, i::Int)
+    c = boundary_coeffs(patch,i)
+    u1 = patch.field.values[patch.faces[i].owner]
+    return c[1] + c[2]*u1
 end;
 
 
-type FaceField{T}
-    mesh
-    internalfield :: Array{T,1}
-    boundaryfield :: Dict{String, Array{T,1}}
+type DirichletPatch
+    value 
+    field 
+    faces :: FaceList
 end
 
-typealias ScalarFaceField FaceField{Float64}
+
+boundary_coeffs(p::DirichletPatch, i::Int) = (p.value[i], 0.0)
 
 
-#
-# α uf + β (uf-u1) / Δ = g   => (αΔ + β) uf = gΔ + β u1
-#
-type Robin
-    α
-    β
-    g
+# Pomocna funkce pro nastaveni Dirichletovy okrajove podminky s jednou zadanou hodnotou
+function set_dirichlet_patch!{T}(u::Field{T}, name::String, val::T)
+    value = [val for i=1:length(u.mesh.patches[name])]
+    u.boundaries[name] = DirichletPatch(value, u, u.mesh.patches[name])
+end;
+
+type NeumannPatch
+    deriv 
+    field 
+    faces :: FaceList
 end
 
-# uf = c1 + c2 * u1 = ...
-bndcoeffs(uin, Δ, bc::Robin) = ( bc.g*Δ / (bc.α*Δ + bc.β), bc.β / (bc.α*Δ + bc.β) );
 
-function bndvalue(uin, Δ, bc::Robin)
-    c1, c2 = bndcoeffs(uin, Δ, bc)
-    c1 + c2*uin
+function boundary_coeffs(p::NeumannPatch, i::Int)
+    u = p.field
+    m = u.mesh
+    f = p.faces[i]
+    δ = dot(f.x - m.cells[f.owner].x, f.s) / norm(f.s)
+    return (p.deriv[i] * δ, 1.0)
 end
 
-# dudn = (uf - u1) / Δ = g/(αΔ + β) - α/(β + αΔ) * u1
-ddncoeffs(uin, Δ, bc::Robin) = ( bc.g / (bc.α*Δ + bc.β), -bc.α / (bc.α*Δ + bc.β) );
+function set_neumann_patch!{T}(u::Field{T}, name::String, der::Float64)
+    deriv = [der for i=1:length(u.mesh.patches[name])]
+    u.boundaries[name] = NeumannPatch(deriv, u, u.mesh.patches[name])
+end;
 
 
-Dirichlet(value) = Robin(1.0, 0.0, value);
-Neumann(value) = Robin(0.0, 1.0, value);
-
-
-function correctboundary!{T}(u::Field{T})
-    mesh = u.mesh
-
-    for patch in patches(mesh)
-        bc = u.boundarycondition[ name(patch) ]
-        up = u.boundaryfield[ name(patch) ]
-
-        for fi in zip(boundaryfaces(patch), eachindex(up))
-            f,i = fi
-            owner = f.owner
-            co = cell(mesh, owner)
-            Δ = norm(f.x - co.x)
-            up[i] = bndvalue(u.value[owner], Δ, bc)
-        end
-    end
-end    
