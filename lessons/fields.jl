@@ -1,4 +1,5 @@
 import Base.-, Base.+, Base.*, Base./
+import Base.getindex, Base.setindex!
 
 type Field{T}
     values :: Array{T,1}
@@ -6,6 +7,8 @@ type Field{T}
     boundaries
 end
 
+getindex{T}(f::Field{T}, i::Int) = f.values[i]
+setindex!{T}(f::Field{T}, v::T, i::Int) = begin f.values[i] = v end
 
 const ScalarField = Field{Float64}
 ScalarField(m::Mesh) = ScalarField( zeros(Float64,length(m.cells)), m, Dict{String,Any}());
@@ -91,7 +94,7 @@ function boundary_coeffs(p::NeumannPatch, i::Int)
     return (p.deriv[i] * δ, 1.0)
 end
 
-function set_neumann_patch!{T}(u::Field{T}, name::String, der::Float64)
+function set_neumann_patch!{T}(u::Field{T}, name::String, der)
     deriv = [der for i=1:length(u.mesh.patches[name])]
     u.boundaries[name] = NeumannPatch(deriv, u, u.mesh.patches[name])
 end;

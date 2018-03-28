@@ -4,6 +4,9 @@ type Equation{T}
     b :: Array{T,1}
 end
 
+Ac{T}(eq::Equation{T}) = diag(eq.A);
+H{T}(eq::Equation{T}) =  -eq.b .+ Ac(eq) .* eq.x .-  eq.A * eq.x;
+
 function *(A::SparseMatrixCSC{Float64,Int64}, x::Array{Vec2d,1})
     n,m = size(A)
     assert(length(x) == m)
@@ -206,7 +209,7 @@ end
 # Explicitni vypocet gradientu
 function ∇(p::ScalarField)
     m = p.mesh
-    r = zeros(Vec2d,length(u.values))    
+    r = zeros(Vec2d,length(p.values))    
     
     for f ∈ m.faces
         o, n = f.owner, f.neigh
