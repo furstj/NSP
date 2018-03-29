@@ -152,7 +152,14 @@ function gmsh_mesh(filename)
         push!(cells, Cell(cid, mass[cid]/vol[cid], vol[cid]) )
     end
 
-    return Mesh(nodes, faces, cells, patches)
+    c2p_start = [1]
+    c2p_tgt   = Array{Int,1}()
+    for e in elements
+        push!(c2p_start, length(e))
+        append!(c2p_tgt, e)
+    end
+    c2p = ConnectivityList(cumsum(c2p_start), c2p_tgt)
+    return Mesh(nodes, faces, cells, patches, c2p)
 end
 
 #mesh = gmsh_mesh("ctverec.msh");

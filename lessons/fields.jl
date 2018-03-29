@@ -55,6 +55,11 @@ function ←{T}(a::Field{T}, b::Field{T})
     a.values = copy(b.values)
 end
 
+function ←{T}(a::Field{T}, b::Array{T,1})
+    assert(length(a.values) == length(b))
+    a.values = copy(b)
+end
+
 
 function boundary_value(patch, i::Int)
     c = boundary_coeffs(patch,i)
@@ -100,3 +105,63 @@ function set_neumann_patch!{T}(u::Field{T}, name::String, der)
 end;
 
 
+function interpolate_to_points{T}(f::Field{T})
+    mesh = f.mesh
+    fn = zeros(T, length(mesh.points))
+    vn = zeros(length(mesh.points))
+    for c in mesh.cells
+        for pid in mesh.cell2points[c.id]
+            fn[pid] += f[c.id] * c.vol
+            vn[pid] += c.vol
+        end
+    end
+    return fn ./ vn
+end
+
+
+# Vykresleni pomoci matplotlib
+function plot_contour(f::ScalarField, kwargs...)
+    mesh = f.mesh
+    x = [p[1] for p in mesh.points]
+    y = [p[2] for p in mesh.points]
+    tri  = triangles(mesh) - 1
+    fn = interpolate_to_points(f)
+
+    tricontour(x, y, tri, fn; kwargs...)
+end
+
+
+function plot_contour(f::VectorField; kwargs...)
+    mag = ScalarField(f.mesh)
+    mag ← [norm(v) for v in f.values]
+    plot_contour(mag; kwargs...)
+end
+
+
+function plot_contourf(f::ScalarField; kwargs...)
+    mesh = f.mesh
+    x = [p[1] for p in mesh.points]
+    y = [p[2] for p in mesh.points]
+    tri  = triangles(mesh) - 1
+    fn = interpolate_to_points(f)
+
+    tricontourf(x, y, tri, fn; kwargs...)
+end
+
+
+function plot_contourf(f::VectorField; kwargs...)
+    mag = ScalarField(f.mesh)
+    mag ← [norm(v) for v in f.values]
+    plot_contourf(mag; kwargs...)
+end
+
+
+function plot_arrows(f::VectorField; kwargs...)
+    mesh = f.mesh
+    x = [c.x[1] for c in mesh.cells]
+    y = [c.x[2] for c in mesh.cells]
+    u = [v[1]   for v in f.values]
+    v = [v[2]   for v in f.values]
+
+    quiver(x, y, u, v; kwargs...)
+end

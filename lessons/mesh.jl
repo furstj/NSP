@@ -1,10 +1,12 @@
 using StaticArrays
 import Base.-, Base.+, Base.*, Base./
+import Base.getindex
 
 const Vec2d = SVector{2,Float64};
 const VecList = Array{Vec2d,1};
 
-immutable Cell
+
+struct Cell
     id  :: Int
     x   :: Vec2d
     vol :: Float64
@@ -12,7 +14,8 @@ end
 
 const CellList = Array{Cell,1};
 
-immutable Face
+
+struct Face
     id    :: Int
     x     :: Vec2d
     s     :: Vec2d
@@ -22,14 +25,47 @@ end;
 
 const FaceList = Array{Face,1};
 
+
 const PatchDict = Dict{String,FaceList};
 
-type Mesh
+
+struct ConnectivityList
+    start  :: Array{Int,1}
+    target :: Array{Int,1}
+end
+
+getindex(c::ConnectivityList, i::Int) = view(c.target, c.start[i]:c.start[i+1]-1)
+
+struct Mesh
     points  :: VecList
     faces   :: FaceList
     cells   :: CellList
     patches :: PatchDict
+    cell2points :: ConnectivityList
 end
+
+
+function plot_mesh(m::Mesh, style="-k")
+    for c in m.cells
+        pids = m.cell2points[c.id]
+        x = [ m.points[p][1] for p ∈ pids ]; push!(x, x[1])
+        y = [ m.points[p][2] for p ∈ pids ]; push!(y, y[1])        
+        plot(x,y, style)
+    end
+end
+
+
+function triangles(m::Mesh)
+    tri = Array{Array{Int,1},1}()
+    for c in m.cells
+        pids = m.cell2points[c.id]
+        for i=3:length(pids)
+            push!(tri, [pids[1], pids[i-1], pids[i]])
+        end
+    end
+    return tri
+end
+
 
 function cartesian_mesh(nx, ny)
     Δx, Δy = 1.0/nx, 1.0/ny
@@ -78,6 +114,12 @@ function cartesian_mesh(nx, ny)
         "left"   => [ Face( fid(), Vec2d(0,(j-0.5)*Δy), Vec2d(-Δx,0), cid(1,j), 0) for j=1:ny],
         "right"  => [ Face( fid(), Vec2d(1,(j-0.5)*Δy), Vec2d(Δx,0),  cid(nx,j), 0) for j=1:ny],
     )
+
+    c2p_start = [1+4*(i-1) for i=1:nx*ny+1]
+    c2p_target = []
+    for j=1:ny, i=1:nx
+        append!(c2p_target, [pid(i-1,j-1), pid(i,j-1), pid(i,j), pid(i-1,j)])
+    end
     
-    return Mesh(points, faces, cells, patches)
+    return Mesh(points, faces, cells, patches, ConnectivityList(c2p_start, c2p_target) )
 end
