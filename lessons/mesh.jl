@@ -1,125 +1,216 @@
+using Plots
 using StaticArrays
+using LinearAlgebra
 import Base.-, Base.+, Base.*, Base./
 import Base.getindex
 
-const Vec2d = SVector{2,Float64};
-const VecList = Array{Vec2d,1};
+const Scalar = Float64;
+const Vector = SVector{2,Float64};
+const Label  = Int;
 
 
-struct Cell
-    id  :: Int
-    x   :: Vec2d
-    vol :: Float64
-end
-
-const CellList = Array{Cell,1};
+const ScalarList = Array{Scalar,1};
+const VectorList = Array{Vector,1};
+const LabelList  = Array{Label,1};
+const LabelListList = Array{LabelList,1};
 
 
-struct Face
-    id    :: Int
-    x     :: Vec2d
-    s     :: Vec2d
-    owner :: Int
-    neigh :: Int
+×(u::Vector, v::Vector) = u[1]*v[2] - u[2]*v[1];
+
+
+struct PatchInfo
+    name  :: String
+    range :: UnitRange{Label}
 end;
 
-const FaceList = Array{Face,1};
 
+const PatchInfoList = Array{PatchInfo,1};
 
-const PatchDict = Dict{String,FaceList};
-
-
-struct ConnectivityList
-    start  :: Array{Int,1}
-    target :: Array{Int,1}
-end
-
-getindex(c::ConnectivityList, i::Int) = view(c.target, c.start[i]:c.start[i+1]-1)
 
 struct Mesh
-    points  :: VecList
-    faces   :: FaceList
-    cells   :: CellList
-    patches :: PatchDict
-    cell2points :: ConnectivityList
+    point      :: VectorList     # Souradnice vrcholu site 
+    centre     :: VectorList     # Souradnice stredu bunek 
+    volume     :: ScalarList     # Velikosti (objemy) bunek
+    surface    :: VectorList     # Normalovy vektor na stenu 
+    facecentre :: VectorList     # Souradnice stredu strany
+    owner      :: LabelList      # Vlastnik steny
+    neighbor   :: LabelList      # Soused steny
+    patch      :: PatchInfoList  # Seznam okrajovych podminek
+    
+    cell2point :: LabelListList  # Indexy vrcholu bunek
+    face2point :: LabelListList  # Indexy vrcholu sten
 end
 
 
-function plot_mesh(m::Mesh, style="-k")
-    for c in m.cells
-        pids = m.cell2points[c.id]
-        x = [ m.points[p][1] for p ∈ pids ]; push!(x, x[1])
-        y = [ m.points[p][2] for p ∈ pids ]; push!(y, y[1])        
-        plot(x,y, style)
-    end
+"""
+    Mesh(point, owner, neighbor, patch, cell2point, face2point)
+
+    Vytvori sit ze zadanych souradnic vrcholu a informaci o konektivite
+"""
+function Mesh(point::VectorList, owner::LabelList, neighbor::LabelList, patch::PatchInfoList, cell2point::LabelListList, face2point::LabelListList)
+    m = Mesh(point, VectorList(), ScalarList(), VectorList(), VectorList(), owner, neighbor, patch, cell2point, face2point)
+    update!(m)
+    return m
 end
 
 
-function triangles(m::Mesh)
-    tri = Array{Array{Int,1},1}()
-    for c in m.cells
-        pids = m.cell2points[c.id]
-        for i=3:length(pids)
-            push!(tri, [pids[1], pids[i-1], pids[i]])
+"""
+    update!(mesh::Mesh)
+
+    Vypocte objemy bunek, souradnice stredu bunek, normalove vektory na steny a stredy sten.
+"""
+function update!(mesh::Mesh)
+    
+    # Recalculate cell centres & volumes
+    ncells = size(mesh.cell2point,1)
+    empty!(mesh.centre)
+    empty!(mesh.volume)
+    for c=1:ncells
+        pts = mesh.point[mesh.cell2point[c]]
+        
+        v = Scalar(0)
+        x = Vector(0,0)
+        p1 = pts[end]
+        for i=1:size(pts,1)-2
+            p2 = pts[i]
+            p3 = pts[i+1]
+            vv = (p2 - p1) × (p3 - p1) / 2
+            v += vv
+            x += vv*(p1 + p2 + p3)/3
         end
+        push!(mesh.volume, v)
+        push!(mesh.centre, x/v)
     end
-    return tri
+    
+    # Recalculate face sizes & positions
+    empty!(mesh.surface)
+    empty!(mesh.facecentre)
+    nfaces = size(mesh.face2point,1)
+    for f=1:nfaces
+        pts = mesh.point[mesh.face2point[f]]
+        push!(mesh.surface, Vector(pts[2][2]-pts[1][2], pts[1][1]-pts[2][1]))
+        push!(mesh.facecentre, (pts[1]+pts[2])/2)
+    end 
 end
 
+"""
+    cartesian_mesh(nx, ny)
 
+    Vytvori kartezskou sit o nx*ny bunkach v jednotkovem ctverci. Okrajove podminky pojmenuje "left", "right", "top" a "bottom"
+"""
 function cartesian_mesh(nx, ny)
     Δx, Δy = 1.0/nx, 1.0/ny
     
     pid(i,j) = i + j*(nx+1) + 1
     cid(i,j) = i + (j-1)*nx
 
-    fid_  = 0 
-    function fid() 
-        fid_+=1
-        return fid_
-    end
-    
-    # mesh points
-    points = VecList()
-    for j=0:ny,i=0:nx
-        push!(points, Vec2d(i*Δx, j*Δy))
-    end
-    
-    faces = FaceList()
-    for j=1:ny, i=1:nx
-        if i<nx
-            x = Vec2d(i*Δx,(j-0.5)*Δy)
-            s = Vec2d(Δy,0)
-            push!(faces, Face(fid(), x, s, cid(i,j), cid(i+1,j)))
-        end
-        
-        if j<ny
-            x = Vec2d((i-0.5)*Δx,j*Δy)
-            s = Vec2d(0,Δx)
-            push!(faces, Face(fid(), x, s, cid(i,j), cid(i,j+1)))
-        end
-            
-    end
-    
-    # mesh cells
-    cells = CellList()
-    for j=1:ny,i=1:nx
-        push!(cells, Cell(cid(i,j), Vec2d((i-0.5)*Δx,(j-0.5)*Δy), Δx*Δy))
-    end
-    
-    # boundary patches
-    patches = PatchDict(
-        "bottom" => [ Face( fid(), Vec2d((i-0.5)*Δx,0), Vec2d(0,-Δy), cid(i,1), 0) for i=1:nx],
-        "top"    => [ Face( fid(), Vec2d((i-0.5)*Δx,1), Vec2d(0,Δy), cid(i,ny), 0) for i=1:nx],
-        "left"   => [ Face( fid(), Vec2d(0,(j-0.5)*Δy), Vec2d(-Δx,0), cid(1,j), 0) for j=1:ny],
-        "right"  => [ Face( fid(), Vec2d(1,(j-0.5)*Δy), Vec2d(Δx,0),  cid(nx,j), 0) for j=1:ny],
-    )
 
-    c2p_start = [1+4*(i-1) for i=1:nx*ny+1]
-    c2p_target = []
-    for j=1:ny, i=1:nx
-        append!(c2p_target, [pid(i-1,j-1), pid(i,j-1), pid(i,j), pid(i-1,j)])
+    # Mesh points
+    point = VectorList() 
+    for j=0:ny, i=0:nx
+        push!(point, Vector(i*Δx, j*Δy))
     end
     
-    return Mesh(points, faces, cells, patches, ConnectivityList(c2p_start, c2p_target) )
+    # Mesh cells
+    cell2point = LabelListList()
+    for j=1:ny, i=1:nx
+        pts = [pid(i-1,j-1), pid(i,j-1), pid(i,j), pid(i-1,j)] |> LabelList
+        push!(cell2point, pts)
+    end
+    
+    # Mesh faces
+    owner = LabelList()
+    neighbor = LabelList()
+    face2point = LabelListList()
+    
+    # Internal faces
+    for j=1:ny, i=1:nx-1
+        push!(owner, cid(i,j))
+        push!(neighbor, cid(i+1,j))
+        push!(face2point, [pid(i,j-1), pid(i,j)])
+    end
+
+    for j=1:ny-1, i=1:nx
+        push!(owner, cid(i,j))
+        push!(neighbor, cid(i,j+1))
+        push!(face2point, [pid(i,j), pid(i-1,j)])
+    end
+    
+    # Boundary patches
+    # - bottom
+    patch = PatchInfoList()
+    j=0
+    start = size(owner,1)+1
+    for i=1:nx
+        push!(owner, cid(i,j+1))
+        push!(face2point, [pid(i-1,j), pid(i,j)])
+    end
+    push!(patch, PatchInfo("bottom", UnitRange(start, size(owner,1))))
+
+    # - right
+    i=nx
+    start = size(owner,1)+1
+    for j=1:ny
+        push!(owner, cid(i,j))
+        push!(face2point, [pid(i,j-1), pid(i,j)])
+    end
+    push!(patch, PatchInfo("right", UnitRange(start, size(owner,1))))
+    
+    # - top
+    j=ny
+    start = size(owner,1)+1
+    for i=1:nx
+        push!(owner, cid(i,j))
+        push!(face2point, [pid(i,j), pid(i-1,j)])
+    end
+    push!(patch, PatchInfo("top", UnitRange(start, size(owner,1))))
+
+    # - left
+    i=0
+    start = size(owner,1)+1
+    for j=1:ny
+        push!(owner, cid(i+1,j))
+        push!(face2point, [pid(i,j), pid(i,j-1)])
+    end
+    push!(patch, PatchInfo("left", UnitRange(start, size(owner,1))))
+    
+    return Mesh(point, owner, neighbor, patch, cell2point, face2point)
+end
+
+
+cells(m::Mesh) = UnitRange(1,length(m.volume))
+
+internal_faces(m::Mesh) = UnitRange(1,length(m.neighbor))
+
+all_faces(m::Mesh) = UnitRange(1,length(m.owner))
+
+boundary_patches(m::Mesh) = UnitRange(1,length(m.patch))
+
+patch_names(m::Mesh) = [ m.patch[p].name for p in boundary_patches(m)]
+
+patch_by_name(m::Mesh, name::String) = findfirst(x->x==name, patch_names(m))
+
+patch_faces(m::Mesh, patch::Label) = m.patch[patch].range
+
+
+function plot_mesh(m::Mesh)
+    plt = plot(aspect_ratio=:equal, legend=:none)
+
+    for f in internal_faces(m)
+        pts = m.point[m.face2point[f]]
+        x = [pts[1][1], pts[2][1]]
+        y = [pts[1][2], pts[2][2]]
+        plot!(plt, x, y, c="black")
+    end
+    
+    for p in boundary_patches(m)
+        for f in patch_faces(m, p)
+            pts = m.point[m.face2point[f]]
+            x = [pts[1][1], pts[2][1]]
+            y = [pts[1][2], pts[2][2]]
+            plot!(plt, x, y, c="black", width=2)
+        end
+    end
+    
+    return plt
 end
