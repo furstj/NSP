@@ -97,7 +97,7 @@ function set_dirichlet_patch!(field::Field{T}, name::String, val::T) where {T}
     c1 = [val for f in patch_faces(mesh, p)]
     c2 = zeros(Scalar, length(c1))
     field.boundaries[name] = BoundaryCondition(c1, c2, field, p)
-end;
+end
 
 
 function set_neumann_patch!(field::Field{T}, name::String) where {T}
@@ -106,53 +106,70 @@ function set_neumann_patch!(field::Field{T}, name::String) where {T}
     c2 = ones(length(patch_faces(mesh, p)))
     c1 = zeros(T, length(c2))
     field.boundaries[name] = BoundaryCondition(c1, c2, field, p)
-end;
+end
 
+
+
+function interpolate_to_points(f::Field{T}) where{T}
+    mesh = f.mesh
+    fn = zeros(T, length(mesh.point))
+    vn = zeros(Scalar, length(mesh.point))
+    for c in cells(mesh)
+        for pid in mesh.cell2point[c]
+            fn[pid] += f[c] * mesh.volume[c]
+            vn[pid] += mesh.volume[c]
+        end
+    end
+    return fn ./ vn
+end
 
 
 # Vykresleni pomoci matplotlib
-#function plot_contour(f::ScalarField, kwargs...)
-#    mesh = f.mesh
-#    x = [p[1] for p in mesh.points]
-#    y = [p[2] for p in mesh.points]
-#    tri  = triangles(mesh) - 1
-#    fn = interpolate_to_points(f)
+function plot_contour(f::ScalarField, kwargs...)
+    mesh = f.mesh
+    x = [p[1] for p in mesh.point]
+    y = [p[2] for p in mesh.point]
+    tri  = triangles(mesh) .- 1
+    fn = interpolate_to_points(f)
 
-#    tricontour(x, y, tri, fn; kwargs...)
-#end
-
-
-#function plot_contour(f::VectorField; kwargs...)
-#    mag = ScalarField(f.mesh)
-#    mag ← [norm(v) for v in f.values]
-#    plot_contour(mag; kwargs...)
-#end
+    PyPlot.tricontour(x, y, tri, fn; kwargs...)
+end
 
 
-#function plot_contourf(f::ScalarField; kwargs...)
-#    mesh = f.mesh
-#    x = [p[1] for p in mesh.points]
-#    y = [p[2] for p in mesh.points]
-#    tri  = triangles(mesh) - 1
-#    fn = interpolate_to_points(f)
-#
-#    tricontourf(x, y, tri, fn; kwargs...)
-#end
+function plot_contour(f::VectorField; kwargs...)
+    mag = ScalarField(f.mesh)
+    mag ← [norm(v) for v in f.values]
+    plot_contour(mag; kwargs...)
+end
 
 
-#function plot_contourf(f::VectorField; kwargs...)
-#    mag = ScalarField(f.mesh)
-#    mag ← [norm(v) for v in f.values]
-#    plot_contourf(mag; kwargs...)
-#end
+function plot_contourf(f::ScalarField; kwargs...)
+    mesh = f.mesh
+    x = [p[1] for p in mesh.point]
+    y = [p[2] for p in mesh.point]
+    tri  = triangles(mesh)
+    for i=1:length(tri)
+        tri[i] .-= 1
+    end
+    fn = interpolate_to_points(f)
+
+    PyPlot.tricontourf(x, y, tri, fn; kwargs...)
+end
 
 
-#function plot_arrows(f::VectorField; kwargs...)
-#    mesh = f.mesh
-#    x = [c.x[1] for c in mesh.cells]
-#    y = [c.x[2] for c in mesh.cells]
-#    u = [v[1]   for v in f.values]
-#    v = [v[2]   for v in f.values]
-#
-#    quiver(x, y, u, v; kwargs...)
-#end
+function plot_contourf(f::VectorField; kwargs...)
+    mag = ScalarField(f.mesh)
+    mag ← [norm(v) for v in f.values]
+    plot_contourf(mag; kwargs...)
+end
+
+
+function plot_arrows(f::VectorField; kwargs...)
+    mesh = f.mesh
+    x = [c[1] for c in mesh.centre]
+    y = [c[2] for c in mesh.centre]
+    u = [v[1] for v in f.values]
+    v = [v[2] for v in f.values]
+
+    PyPlot.quiver(x, y, u, v; kwargs...)
+end

@@ -9,7 +9,7 @@ function gmsh_mesh(filename)
     gmsh = open(filename)
     
     line = ""
-    
+
     find_keyword(name) = begin
         while line != "\$"*name
             line = readline(gmsh)
@@ -34,21 +34,22 @@ function gmsh_mesh(filename)
         end
     end
     
-    
+
     find_keyword("Nodes")
     nnodes = parse(Int, readline(gmsh))
-    nodes = Array{Vec2d,1}()
+    nodes = Array{Vector,1}()
     for i=1:nnodes
         words = split(readline(gmsh))
         x = parse(Float64, words[2]) 
         y = parse(Float64, words[3]) 
-        push!(nodes, Vec2d(x,y))
+        push!(nodes, Vector(x,y))
     end
 
-    const Edge = Tuple{Int64,Int64}
+    Edge = Tuple{Int64,Int64}
+
     
     find_keyword("Elements")
-    elements = Array{Array{Int,1},1}()
+    cell2point = LabelListList()
     boundary_lines = Dict{Int, Array{Edge,1}}()
     for (k,v) in physical_lines
         boundary_lines[k] = []
@@ -60,10 +61,10 @@ function gmsh_mesh(filename)
         etype = numbers[2]
         ntags = numbers[3]
 
-        if etype==1
+        if etype==1  # line
             push!( boundary_lines[numbers[4]], (numbers[4+ntags],numbers[5+ntags]) )
-        elseif etype==2 || etype==3
-            push!(elements, numbers[4+ntags:end])
+        elseif etype==2 || etype==3  # triangle or quad
+            push!(cell2point, numbers[4+ntags:end])
         else
             error("Unknown element type ", etype)
         end            
@@ -71,95 +72,60 @@ function gmsh_mesh(filename)
 
     close(gmsh)
 
+    
+    
     #### Build data structures for Mesh
-    face_buffer = Dict{Edge,Int64}()
-    face_id = 0
 
-    push_face!(flist, p1, p2, owner, neigh) = begin
-        face_id += 1
-        a, b = nodes[p1], nodes[p2]
-        x = (a + b) / 2.0
-        s = Vec2d(b[2]-a[2],a[1]-b[1])
-        push!(flist, Face(face_id, x, s, owner, neigh))
+    edge_owner = Dict{Edge,Label}()
+
+    owner = LabelList()
+    neighbor = LabelList()
+    face2point = LabelListList()
+    
+    push_face(p1, p2, o, n=nothing) = begin
+        push!(owner, o)
+        if n != nothing; push!(neighbor, n); end
+        push!(face2point, [p1, p2])
     end
     
-    # Internal faces
-    faces = FaceList()
-    for (owner,e) in enumerate(elements)
-        cnodes = [e' e[1]]
-        for i in 1:length(cnodes)-1
-            p1 = cnodes[i]
-            p2 = cnodes[i+1]
-
-            if haskey(face_buffer, (p2,p1))
-                neigh = face_buffer[(p2,p1)]
-                delete!(face_buffer, (p2,p1))
-                push_face!(faces, p1, p2, owner, neigh)
+    # Process all faces and push internal faces into owner/neighbor/face2point
+    for o = 1:length(cell2point)
+        pts = [cell2point[o]; cell2point[o][1]]
+        for i = 1:length(pts)-1
+            p1, p2 = pts[i], pts[i+1]
+            
+            if haskey(edge_owner, (p2,p1))
+                n = edge_owner[(p2,p1)]
+                delete!(edge_owner, (p2,p1))
+                push_face(p1, p2, o, n)
             else
-                face_buffer[(p1,p2)] = owner
-            end       
+                edge_owner[(p1,p2)] = o
+            end
         end
     end
-    
-    # Boundary faces
-    patches = PatchDict()
-    fid = length(faces) + 1
-    for (tag,edges) in boundary_lines
+
+    patch = PatchInfoList()
+    for (tag, edges) in boundary_lines
         name = physical_lines[tag]
-        bfaces = FaceList()
+        start = length(owner)+1
+        stop  = start + length(edges) - 1
+        push!(patch, PatchInfo(name, start:stop))
+
         for e in edges
-            if haskey(face_buffer,e)
-                p1,p2 = e[1], e[2]
-                owner = face_buffer[e]
-                push_face!(bfaces, p1, p2, owner, 0)
-                delete!(face_buffer, e)
-            elseif haskey(face_buffer, (e[2],e[1]))
-                p1, p2 = e[2], e[1]
-                owner = face_buffer[(p1,p2)]
-                push_face!(bfaces, p1, p2, owner, 0)
-                delete!(face_buffer, (p1,p2))
+            p1, p2 = e[1], e[2]
+            if haskey(edge_owner, (p1, p2))
+                o = edge_owner[(p1, p2)]
+                push_face(p1, p2, o)
+            elseif haskey(edge_owner, (p2, p1))
+                o = edge_owner[(p2, p1)]
+                push_face(p2, p1, o)
             else
                 error("Error in processing mesh faces!")
             end
         end
-        patches[name] = bfaces
     end
 
-    # Calculating cell volumes
-    vol = zeros(length(elements))
-    mass = zeros(Vec2d, length(elements))
-    for f in faces
-        o = f.owner
-        n = f.neigh
-        v = dot(f.x,f.s) / 2
-        vol[o] += v
-        vol[n] -= v
-        mass[o] += 2.0/3.0*f.x*v
-        mass[n] -= 2.0/3.0*f.x*v
-    end
-
-    for (n,flist) in patches
-        for f in flist
-            o = f.owner
-            v = dot(f.x,f.s) / 2
-            vol[o] += v
-            mass[o] += 2.0/3.0*f.x*v
-        end
-    end
-
-    cells = CellList()
-    for cid in 1:length(vol)
-        push!(cells, Cell(cid, mass[cid]/vol[cid], vol[cid]) )
-    end
-
-    c2p_start = [1]
-    c2p_tgt   = Array{Int,1}()
-    for e in elements
-        push!(c2p_start, length(e))
-        append!(c2p_tgt, e)
-    end
-    c2p = ConnectivityList(cumsum(c2p_start), c2p_tgt)
-    return Mesh(nodes, faces, cells, patches, c2p)
+    return Mesh(nodes, owner, neighbor, patch, cell2point, face2point)
 end
 
 #mesh = gmsh_mesh("ctverec.msh");

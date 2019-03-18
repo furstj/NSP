@@ -1,8 +1,8 @@
-using Plots
 using StaticArrays
 using LinearAlgebra
 import Base.-, Base.+, Base.*, Base./
 import Base.getindex
+import PyPlot
 
 const Scalar = Float64;
 const Vector = SVector{2,Float64};
@@ -193,24 +193,23 @@ patch_by_name(m::Mesh, name::String) = findfirst(x->x==name, patch_names(m))
 patch_faces(m::Mesh, patch::Label) = m.patch[patch].range
 
 
-function plot_mesh(m::Mesh)
-    plt = plot(aspect_ratio=:equal, legend=:none)
-
-    for f in internal_faces(m)
-        pts = m.point[m.face2point[f]]
-        x = [pts[1][1], pts[2][1]]
-        y = [pts[1][2], pts[2][2]]
-        plot!(plt, x, y, c="black")
+function plot_mesh(mesh::Mesh, style="-k")
+    for f in all_faces(mesh)
+        pts = mesh.face2point[f]
+        x = [mesh.point[p][1] for p in pts]
+        y = [mesh.point[p][2] for p in pts]
+        PyPlot.plot(x, y, style)
     end
-    
-    for p in boundary_patches(m)
-        for f in patch_faces(m, p)
-            pts = m.point[m.face2point[f]]
-            x = [pts[1][1], pts[2][1]]
-            y = [pts[1][2], pts[2][2]]
-            plot!(plt, x, y, c="black", width=2)
+end
+
+
+function triangles(m::Mesh)
+    tri = Array{Array{Int,1},1}()
+    for c in cells(m)
+        pids = m.cell2point[c]
+        for i=3:length(pids)
+            push!(tri, [pids[1], pids[i-1], pids[i]])
         end
     end
-    
-    return plt
-end
+    return tri
+end 
