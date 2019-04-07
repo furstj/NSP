@@ -1,4 +1,5 @@
 using SparseArrays
+using LinearAlgebra
 
 struct Equation{T}
     A :: SparseMatrixCSC{Scalar,Label}
@@ -88,7 +89,7 @@ end;
 # Aproximace casove derivace
 function ddt(f::Field{T}, Δt) where {T} 
     n = length(f.values)
-    Equation{T}(I/Δt, f.values, -f.values/Δt)
+    Equation{T}(sparse(I/Δt,n,n), f.values, -f.values/Δt)
 end;    
 
 
