@@ -63,6 +63,16 @@ function ←(a::Field{T}, b::Field{T}) where {T}
     a.values[:] = copy(b.values)
 end
 
+function ←(a::Field{T}, b::Float64) where {T}
+    a.values[:] .= b
+end
+
+function ←(a::VectorField, b::Vector) where {T}
+    for i in eachindex(a.values)
+        a.values[i] = b
+    end
+end
+
 function ←(a::Field{T}, b::Array{T,1}) where {T}
     @assert length(a.values) == length(b)
     a.values[:] = copy(b)
